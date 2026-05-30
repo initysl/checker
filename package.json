@@ -1,0 +1,36 @@
+{
+  "name": "checker",
+  "version": "1.0.0",
+  "description": "A CLI tool that crawls a website and identifies broken links",
+  "main": "src/index.js",
+  "bin": {
+    "checker": "./bin/checker.js"
+  },
+  "scripts": {
+    "start": "node bin/checker.js",
+    "dev": "node --watch bin/checker.js"
+  },
+  "keywords": [
+    "cli",
+    "broken-links",
+    "crawler",
+    "link-checker"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "axios": "^1.16.1",
+    "chalk": "^5.6.2",
+    "cheerio": "^1.2.0",
+    "cli-table3": "^0.6.5",
+    "commander": "^15.0.0",
+    "ora": "^9.4.0",
+    "p-limit": "^7.3.0",
+    "robots-parser": "^3.0.1",
+    "uuid": "^14.0.0"
+  },
+  "overrides": {
+    "whatwg-encoding": "npm:@exodus/bytes@^1.0.0"
+  }
+}

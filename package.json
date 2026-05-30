@@ -8,7 +8,8 @@
   },
   "scripts": {
     "start": "node bin/checker.js",
-    "dev": "node --watch bin/checker.js"
+    "dev": "node --watch bin/checker.js",
+    "test:test": "node test.js"
   },
   "keywords": [
     "cli",
@@ -16,7 +17,7 @@
     "crawler",
     "link-checker"
   ],
-  "author": "",
+  "author": "Yusuf",
   "license": "ISC",
   "type": "module",
   "dependencies": {

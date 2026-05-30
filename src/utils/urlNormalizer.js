@@ -1,26 +1,58 @@
 // Protocols that are not crawlable — skip immediately
 const SKIP_PROTOCOLS = ['mailto:', 'tel:', 'javascript:', 'data:', 'ftp:', '#'];
 
+// File extensions that are never HTML pages — skip crawling, still checkable as links
+const BINARY_EXTENSIONS = [
+  '.pdf',
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.gif',
+  '.svg',
+  '.webp',
+  '.ico',
+  '.mp4',
+  '.mp3',
+  '.avi',
+  '.mov',
+  '.zip',
+  '.tar',
+  '.gz',
+  '.rar',
+  '.doc',
+  '.docx',
+  '.xls',
+  '.xlsx',
+  '.ppt',
+  '.pptx',
+  '.woff',
+  '.woff2',
+  '.ttf',
+  '.eot',
+  '.css',
+  '.js',
+  '.json',
+  '.xml',
+  '.rss',
+  '.atom',
+];
+
 /**
  * Resolve a href to a full absolute URL.
- * Returns null if it can't be resolved.
+ * Returns null if it can't be resolved or should be skipped.
  */
 export function normalize(href, base) {
   if (!href || typeof href !== 'string') return null;
 
   const trimmed = href.trim();
 
-  // Skip non-http protocols and pure fragments
   if (SKIP_PROTOCOLS.some((p) => trimmed.startsWith(p))) return null;
   if (trimmed === '' || trimmed === '/')
     return base ? stripFragment(base) : null;
 
   try {
     const resolved = new URL(trimmed, base);
-
-    // Only allow http and https
     if (!['http:', 'https:'].includes(resolved.protocol)) return null;
-
     return stripFragment(resolved.href);
   } catch {
     return null;
@@ -84,4 +116,17 @@ export function shouldIgnore(url, patterns = []) {
     const escaped = pattern.replace(/\*/g, '.*');
     return new RegExp(escaped).test(url);
   });
+}
+
+/**
+ * Returns true if the URL points to a non-HTML binary asset.
+ * These should be checked (HEAD) but never crawled for more links.
+ */
+export function isBinaryUrl(url) {
+  try {
+    const pathname = new URL(url).pathname.toLowerCase();
+    return BINARY_EXTENSIONS.some((ext) => pathname.endsWith(ext));
+  } catch {
+    return false;
+  }
 }

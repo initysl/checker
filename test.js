@@ -1,17 +1,17 @@
 /**
- * Phase 4 — Crawler Tests
- * Run: node test-phase4.js
+ * Reporter Tests
+ * Run: node test.js
+ * Run: npm test:test
  *
- * Uses a local HTTP server to avoid any external network dependency.
+ * Tests console reporter output and JSON reporter file writing.
+ * Uses a local HTTP server — no external network needed.
  */
 
 import http from 'http';
+import { readFile, unlink } from 'fs/promises';
+import { printReport } from './src/reporter/consoleReporter.js';
+import { writeJson } from './src/reporter/jsonReporter.js';
 import { startCrawl } from './src/services/crawler.service.js';
-import {
-  createJob as cj,
-  cancelJob as cx,
-  getJob as gj,
-} from './src/services/queue.service.js';
 
 let passed = 0;
 let failed = 0;
@@ -33,38 +33,24 @@ function section(title) {
 }
 
 // LOCAL TEST SERVER
-// Serves a small HTML site in memory so tests never hit the web
 
 const PAGES = {
   '/': `<html><body>
     <a href="/about">About</a>
     <a href="/blog">Blog</a>
     <a href="/dead">Dead link</a>
-    <a href="https://external-ignore-me.com/page">External</a>
+    <a href="/redirect">Redirect</a>
   </body></html>`,
-
-  '/about': `<html><body>
-    <a href="/">Home</a>
-    <a href="/contact">Contact</a>
-  </body></html>`,
-
-  '/blog': `<html><body>
-    <a href="/">Home</a>
-    <a href="/blog/post-1">Post 1</a>
-  </body></html>`,
-
-  '/blog/post-1': `<html><body>
-    <a href="/blog">Back</a>
-  </body></html>`,
-
-  '/contact': `<html><body>
-    <a href="/">Home</a>
-  </body></html>`,
+  '/about': '<html><body><a href="/">Home</a></body></html>',
+  '/blog': '<html><body><a href="/">Home</a></body></html>',
 };
 
-// /dead is intentionally absent — returns 404
-
 const server = http.createServer((req, res) => {
+  if (req.url === '/redirect') {
+    res.writeHead(301, { Location: '/about' });
+    res.end();
+    return;
+  }
   const page = PAGES[req.url];
   if (page) {
     res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -78,185 +64,204 @@ const server = http.createServer((req, res) => {
 await new Promise((res) => server.listen(0, '127.0.0.1', res));
 const { port } = server.address();
 const BASE = `http://127.0.0.1:${port}`;
-console.log(`\n  Local test server running on ${BASE}`);
+console.log(`\n  Local server on ${BASE}`);
 
-// 1. BASIC CRAWL
-section('1. Basic crawl — local server (depth 2)');
-
-const fired = [];
-const { stats: s1, results: r1 } = await startCrawl(
-  BASE,
-  { depth: 2, concurrency: 3, noRobots: true },
-  (r) => fired.push(r),
-);
-
-assert('returns stats object', typeof s1 === 'object');
-assert('stats.total > 0', s1.total > 0, `got ${s1.total}`);
-assert(
-  'stats.total matches results',
-  s1.total === r1.length,
-  `stats=${s1.total} results=${r1.length}`,
-);
-assert('onResult fired for each link', fired.length === r1.length);
-assert(
-  'every result has url',
-  r1.every((r) => typeof r.url === 'string'),
-);
-assert(
-  'every result has type',
-  r1.every((r) => ['live', 'broken', 'redirect', 'error'].includes(r.type)),
-);
-assert(
-  'every result has sourceUrl',
-  r1.every((r) => typeof r.sourceUrl === 'string'),
-);
-assert(
-  'every result has responseTime',
-  r1.every((r) => typeof r.responseTime === 'number'),
-);
-assert(
-  'every result has depth field',
-  r1.every((r) => typeof r.depth === 'number'),
-);
-assert(
-  'every result has linkType',
-  r1.every((r) => ['internal', 'external'].includes(r.linkType)),
-);
-assert(
-  'stats breakdown sums to total',
-  s1.live + s1.broken + s1.redirects + s1.errors === s1.total,
-);
-assert('broken link detected (/dead)', s1.broken >= 1, `broken=${s1.broken}`);
-assert('live links detected', s1.live >= 1, `live=${s1.live}`);
-
-// 2. DEDUPLICATION
-section('2. Deduplication — no URL checked twice');
-
-const urls = r1.map((r) => r.url);
-const unique = new Set(urls);
-assert(
-  'no duplicate URLs in results',
-  urls.length === unique.size,
-  `${urls.length} results, ${unique.size} unique`,
-);
-
-// 3. DEPTH CONTROL
-section('3. Depth control');
-
-const { results: r_d0 } = await startCrawl(
-  BASE,
-  { depth: 0, concurrency: 3, noRobots: true },
-  () => {},
-);
-assert(
-  'depth 0 — all results at depth 0',
-  r_d0.every((r) => r.depth === 0),
-  `depths: ${[...new Set(r_d0.map((r) => r.depth))]}`,
-);
-assert(
-  'depth 0 — only seed page links',
-  r_d0.length > 0,
-  'no results at depth 0',
-);
-
-const { results: r_d1 } = await startCrawl(
+// Run one crawl — share results across all tests
+const { stats, results } = await startCrawl(
   BASE,
   { depth: 1, concurrency: 3, noRobots: true },
   () => {},
 );
-const depths_d1 = [...new Set(r_d1.map((r) => r.depth))];
-assert(
-  'depth 1 — has depth-0 results',
-  r_d1.some((r) => r.depth === 0),
-);
-assert(
-  'depth 1 — has no depth-2 results',
-  r_d1.every((r) => r.depth <= 1),
-  `found depth: ${depths_d1}`,
-);
 
-// 4. IGNORE PATTERNS
-section('4. Ignore patterns');
+// 1. CRAWL RESULTS SANITY (baseline for reporter tests)
+section('1. Crawl baseline sanity');
 
-const { results: r4 } = await startCrawl(
-  BASE,
-  { depth: 2, concurrency: 3, noRobots: true, ignore: ['/blog*'] },
-  () => {},
-);
-const hasBlog = r4.some((r) => r.url.includes('/blog'));
+assert('has results to report', results.length > 0, `got ${results.length}`);
 assert(
-  'ignored /blog* pattern — no blog URLs in results',
-  !hasBlog,
-  `found: ${r4.filter((r) => r.url.includes('/blog')).map((r) => r.url)}`,
-);
-
-// 5. BROKEN LINK DETECTION
-section('5. Broken link detection');
-
-const brokenResults = r1.filter((r) => r.type === 'broken');
-const deadLink = brokenResults.find((r) => r.url.includes('/dead'));
-assert(
-  '404 page classified as broken',
-  deadLink !== undefined,
-  `broken URLs: ${brokenResults.map((r) => r.url)}`,
+  'has at least one live result',
+  results.some((r) => r.type === 'live'),
 );
 assert(
-  'broken result has status 404',
-  deadLink?.status === 404,
-  `got: ${deadLink?.status}`,
+  'has at least one broken result',
+  results.some((r) => r.type === 'broken'),
 );
-assert('broken result has sourceUrl', typeof deadLink?.sourceUrl === 'string');
+assert(
+  'has at least one redirect',
+  results.some((r) => r.type === 'redirect'),
+);
+assert('stats total matches results', stats.total === results.length);
+assert(
+  'stats breakdown sums correctly',
+  stats.live + stats.broken + stats.redirects + stats.errors === stats.total,
+);
 
-// 6. ERROR RESILIENCE
-section('6. Error resilience — bad domain');
+// 2. CONSOLE REPORTER — does not throw
+section('2. consoleReporter.printReport');
+console.log('  (visual output below — inspect it manually)\n');
 
-let threw = false;
-let errResult = null;
-
+let consoleThrew = false;
 try {
-  await startCrawl(
-    'http://127.0.0.1:1', // nothing listening on port 1
-    { depth: 1, concurrency: 2, noRobots: true },
-    (r) => {
-      errResult = r;
-    },
-  );
-  assert('bad host does not throw', true);
-  assert(
-    'bad host returns error result',
-    errResult?.type === 'error',
-    `got: ${errResult?.type}`,
-  );
-} catch {
-  threw = true;
-  assert('bad host does not throw', false, 'threw an exception');
+  printReport({ url: BASE, stats, results, onlyBroken: false, elapsed: 1234 });
+} catch (err) {
+  consoleThrew = true;
+  console.log('  ERROR:', err.message);
 }
+assert('printReport does not throw', !consoleThrew);
 
-// 7. CANCELLATION
-section('7. Cancellation');
+// --only-broken mode
+let onlyBrokenThrew = false;
+try {
+  printReport({ url: BASE, stats, results, onlyBroken: true, elapsed: 500 });
+} catch (err) {
+  onlyBrokenThrew = true;
+}
+assert('printReport --only-broken does not throw', !onlyBrokenThrew);
 
-const testJobId = cj('http://127.0.0.1', {});
-assert('job starts not cancelled', gj(testJobId).status !== 'cancelled');
-cx(testJobId);
+// Empty results edge case
+let emptyThrew = false;
+try {
+  printReport({
+    url: BASE,
+    stats: { total: 0, live: 0, broken: 0, redirects: 0, errors: 0 },
+    results: [],
+    onlyBroken: false,
+    elapsed: 100,
+  });
+} catch (err) {
+  emptyThrew = true;
+}
+assert('printReport handles empty results', !emptyThrew);
+
+// 3. JSON REPORTER — file structure
+section('3. jsonReporter.writeJson — file structure');
+
+const outPath = '/tmp/checker-phase5-test.json';
+const opts = { depth: 1, concurrency: 3, timeout: 8000, ignore: [] };
+
+await writeJson(outPath, {
+  url: BASE,
+  options: opts,
+  stats,
+  results,
+  elapsed: 1234,
+});
+
+const raw = await readFile(outPath, 'utf-8');
+const report = JSON.parse(raw);
+
+// meta
+assert('report has meta block', typeof report.meta === 'object');
+assert('meta.url matches seed', report.meta.url === BASE);
 assert(
-  'job is cancelled after cancelJob',
-  gj(testJobId).status === 'cancelled',
+  'meta.generatedAt is ISO string',
+  typeof report.meta.generatedAt === 'string' &&
+    report.meta.generatedAt.includes('T'),
+);
+assert('meta.elapsedMs is a number', typeof report.meta.elapsedMs === 'number');
+assert('meta.options.depth present', report.meta.options.depth === opts.depth);
+assert(
+  'meta.options.concurrency present',
+  report.meta.options.concurrency === opts.concurrency,
 );
 
-// 8. CONCURRENCY + TIMING
-section('8. Concurrency — completes quickly');
+// stats
+assert('report has stats block', typeof report.stats === 'object');
+assert(
+  'stats.total correct',
+  report.stats.total === stats.total,
+  `got ${report.stats.total}`,
+);
+assert('stats.broken correct', report.stats.broken === stats.broken);
+assert('stats.live correct', report.stats.live === stats.live);
 
-const t = Date.now();
-await startCrawl(BASE, { depth: 2, concurrency: 10, noRobots: true }, () => {});
-const ms = Date.now() - t;
-assert('crawl completes under 5s', ms < 5000, `took ${ms}ms`);
-console.log(`  ℹ️  Completed in ${ms}ms`);
+// results
+assert('report has results array', Array.isArray(report.results));
+assert('results length matches', report.results.length === results.length);
+
+const first = report.results[0];
+const requiredKeys = [
+  'url',
+  'status',
+  'type',
+  'linkType',
+  'sourceUrl',
+  'finalUrl',
+  'responseTime',
+  'depth',
+  'error',
+];
+assert(
+  'each result has all required keys',
+  requiredKeys.every((k) => k in first),
+  `missing: ${requiredKeys.filter((k) => !(k in first))}`,
+);
+
+// result types are valid
+assert(
+  'all types are valid strings',
+  report.results.every((r) =>
+    ['live', 'broken', 'redirect', 'error'].includes(r.type),
+  ),
+);
+assert(
+  'all linkTypes are valid',
+  report.results.every((r) => ['internal', 'external'].includes(r.linkType)),
+);
+assert(
+  'responseTime is always a number',
+  report.results.every((r) => typeof r.responseTime === 'number'),
+);
+
+// broken link has correct data
+const brokenInReport = report.results.find((r) => r.type === 'broken');
+assert(
+  'broken result status is 404',
+  brokenInReport?.status === 404,
+  `got ${brokenInReport?.status}`,
+);
+assert(
+  'broken result has sourceUrl',
+  typeof brokenInReport?.sourceUrl === 'string',
+);
+
+// 4. JSON REPORTER — valid JSON output
+section('4. jsonReporter — output is valid JSON');
+
+let parseThrew = false;
+try {
+  JSON.parse(raw);
+} catch {
+  parseThrew = true;
+}
+assert('output parses as valid JSON', !parseThrew);
+assert('output is pretty-printed', raw.includes('\n  '));
+
+// 5. JSON REPORTER — different result types preserved
+section('5. jsonReporter — result types preserved');
+
+const typesInFile = [...new Set(report.results.map((r) => r.type))];
+assert(
+  'live type present in file',
+  typesInFile.includes('live'),
+  `types: ${typesInFile}`,
+);
+assert(
+  'broken type present in file',
+  typesInFile.includes('broken'),
+  `types: ${typesInFile}`,
+);
+assert(
+  'redirect type present in file',
+  typesInFile.includes('redirect'),
+  `types: ${typesInFile}`,
+);
 
 // TEARDOWN + SUMMARY
 server.close();
+await unlink(outPath).catch(() => {});
 
-console.log(`\n${'-'.repeat(55)}`);
+console.log(`\n${'═'.repeat(55)}`);
 console.log(`  Results: ${passed} passed, ${failed} failed`);
-console.log('-'.repeat(55));
+console.log('═'.repeat(55));
 
 if (failed > 0) process.exit(1);

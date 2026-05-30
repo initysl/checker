@@ -3,14 +3,16 @@ import { v4 as uuidv4 } from 'uuid';
 // In-memory job store
 const jobs = new Map();
 
-// Create a new crawl job and retune its ID
+/**
+ * Create a new crawl job and return its ID.
+ */
 export function createJob(url, options) {
   const jobId = uuidv4();
 
   jobs.set(jobId, {
     jobId,
     url,
-    oprions,
+    options,
     status: 'pending', // pending | running | complete | cancelled | error
     results: [],
     stats: {
@@ -39,7 +41,9 @@ export function updateJob(jobId, patch) {
   jobs.set(jobId, { ...job, ...patch });
 }
 
-//  Push a single link result into the job and update stats
+/**
+ * Push a single link result into the job and update stats.
+ */
 export function addResult(jobId, result) {
   const job = jobs.get(jobId);
   if (!job) return;
@@ -57,7 +61,7 @@ export function addResult(jobId, result) {
 }
 
 export function cancelJob(jobId) {
-  updateJob(jobId, { status: 'cancelled', completedAt: new Date() });
+  updateJob(jobId, { status: 'cancelled' });
 }
 
 export function isCancelled(jobId) {

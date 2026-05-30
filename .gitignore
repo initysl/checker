@@ -1,2 +1,5 @@
-/node_modules
+node_modules/
+*.json.bak
 report.json
+.env
+.DS_Store
